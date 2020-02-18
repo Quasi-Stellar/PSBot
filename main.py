@@ -2,7 +2,8 @@ import asyncio
 import websockets
 import sys
 
-import lib.reader
+import src.reader
+import data.pokedex
 
 try:
     from config.config import config
@@ -27,10 +28,10 @@ except:
 
 
 async def connect():
+    await data.pokedex.load_dex()
     async with websockets.connect('ws://sim.smogon.com:8000/showdown/websocket') as websocket:   
         while True:
-            message = await websocket.recv()
-            await lib.reader.read(websocket, message)
+            await src.reader.receive(websocket)
 
 
 if __name__ == '__main__':

@@ -3,21 +3,40 @@ import json
 import sys
 from datetime import datetime
 
-from lib.commands import *
+from src.commands import *
 from main import username, password, avatarid, init_rooms, key, roomlevels, admins, bot_msg, console_logging, logging, log_to
 
 
 users = []
 rooms = []
+battles = {}
 commands = listcommands()
 print(commands)
 showjoins = False
+queries = []
 
 
-async def read(ws, message):
+async def receive(ws):
+    message = await ws.recv()
+    await read(ws, message)
+    return message
+
+
+async def read(ws, message=''):
     global users, rooms
     await log(message)
-    message = message.split('|')
+
+    if message.startswith('>battle') and '\n|init|battle\n' in message:
+        if message[1:message.index('\n')] not in rooms:
+            rooms.append(message[1:message.index('\n')])
+        battles[rooms[-1]] = message[message.index('|player|'): message.index('|teampreview')+12].split('\n')
+
+    if message[:4] == '|c:|' or message[:4] == '|pm|':
+        message = message.split('|', 4)
+    elif message[:3] == '|c|':
+        message = message.split('|', 3)
+    else:
+        message = message.split('|')
     if len(message) == 1:
         message.append('')
     if message[1] == 'challstr':
@@ -27,8 +46,10 @@ async def read(ws, message):
                 'challstr': message[2] + '%7C' + message[3]
                 }
         r = requests.post(url='https://play.pokemonshowdown.com/action.php', data=data)
+        print(r.text)
         try:
             r = json.loads(r.text[1:])
+            print(r)
         except json.decoder.JSONDecodeError:
             print('missing or broken value (most likely password)!')
 
@@ -44,23 +65,37 @@ async def read(ws, message):
         print('connected as '+username)
 
     if message[1] == 'init':
-        rooms.append(message[0][1:])
+        rooms.append(message[0][1:-1])
         print('joined: '+rooms[-1])
         for i in message[6].split(','):
             users.append(i)
+
+    elif message[1] == 'queryresponse':
+        queries.append(json.loads(message[3]))
+        print(queries)
+
     elif not message[1] in ['J', 'L', 'N', 'B']:
-        room = message[0][1:-1]
+        room, sender = message[0][1:-1], ['', '', '']
         if message[1] == 'pm':
             room = 'pm|' + message[2]  # pm|user (Ex. pm|~Zarel, pm| QuasiStellar)
+            sender = await src.reader.readname(message[2])
+        elif message[1] == 'c':
+            sender = await src.reader.readname(message[2])
         elif message[1] == 'c:':
             message[-1] = message[-1][:-1]
+            sender = await src.reader.readname(message[3])
         if message[-1].startswith(key) and message[-1] != key:
-            # msg = str(message[-1][len(key):]+' ').split(' ', 1)
             cmd = message[-1][len(key):str(message[-1]+' ').index(' ')]
+            if cmd[-1] == '\n':
+                cmd = cmd[:-1]
+            msg = str(message[-1]+'  ')[len(key + cmd)+1:]
             if cmd in commands:
+                await command(ws, msg, room, sender, cmd)
                 try:
-                    await command(ws, message, room, cmd)
+                    pass
+                    # await command(ws, msg, room, sender, cmd)
                 except:
+                    print('Error: ', sys.exc_info()[0])
                     await send(ws, 'Invalid syntax: %s%s' % (key, cmd), room)
             else:
                 await send(ws, 'Invalid command: %s%s' % (key, cmd), room)
@@ -121,3 +156,15 @@ async def readname(name, busy=None):
         busy = True
 
     return name_, busy, name[0]  # name, busy, auth (if any)
+
+
+def get(ws, var=''):
+    global rooms, battles, queries
+    if var == 'rooms':
+        return rooms
+    elif var == 'battles':
+        return battles
+    elif var == 'queries':
+        return queries
+    else:
+        return []
